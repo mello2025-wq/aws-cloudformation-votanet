@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>VotaNet App - Votaciones en AWS</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f6f9; }
+    .card { background: white; padding: 30px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 420px; }
+    h1 { color: #232f3e; margin-bottom: 5px; }
+    p { color: #555; }
+    .btn { padding: 12px 24px; font-size: 16px; margin: 10px; cursor: pointer; border: none; border-radius: 8px; font-weight: bold; transition: 0.2s; }
+    .btn-azul { background-color: #0073bb; color: white; }
+    .btn-verde { background-color: #1d8102; color: white; }
+    .btn:hover { opacity: 0.85; transform: scale(1.03); }
+    #resultado { margin-top: 20px; font-weight: bold; font-size: 15px; }
+    #conteo { margin-top: 25px; padding: 15px; background: #e8f0fe; border-radius: 8px; text-align: left; }
+    pre { font-size: 13px; background: #222; color: #00ff66; padding: 10px; border-radius: 6px; overflow-x: auto; text-align: left; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h1>🗳️ VotaNet App</h1>
+    <p>Desplegado en AWS con <strong>CloudFormation</strong><br>(API Gateway + Lambda Python + DynamoDB)</p>
+    <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+
+    <input type="text" id="nombreVotante" placeholder="Tu nombre (ej. Luis)" value="Luis" style="padding: 8px; width: 80%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 6px; text-align: center;">
+
+    <div>
+      <button class="btn btn-azul" onclick="votar('Candidato_Azul')">🔵 Votar por Azul</button>
+      <button class="btn btn-verde" onclick="votar('Candidato_Verde')">🟢 Votar por Verde</button>
+    </div>
+
+    <div id="resultado"></div>
+
+    <div id="conteo">
+      <strong>📊 Conteo en Vivo (DynamoDB):</strong>
+      <div id="stats" style="margin-top: 8px;">Cargando...</div>
+      <button onclick="cargarResultados()" style="margin-top: 10px; padding: 6px 12px; font-size: 12px; cursor: pointer;">🔄 Actualizar Conteo</button>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = "https://givn4qq7xi.execute-api.us-east-1.amazonaws.com/prod/votar";
+
+    async function votar(candidato) {
+      const votante = document.getElementById("nombreVotante").value || "Anonimo";
+      const resDiv = document.getElementById("resultado");
+      resDiv.innerHTML = "⏳ Enviando voto a AWS...";
+      resDiv.style.color = "#555";
+
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ candidato: candidato, votante: votante })
+        });
+        const data = await res.json();
+        resDiv.innerHTML = "✅ " + data.mensaje + "<br><small>ID Voto: " + data.datos.VotoId + " | " + candidato + "</small>";
+        resDiv.style.color = "#1d8102";
+        cargarResultados();
+      } catch (err) {
+        resDiv.innerHTML = "❌ Error al conectar: " + err;
+        resDiv.style.color = "#d13212";
+      }
+    }
+
+    async function cargarResultados() {
+      const statsDiv = document.getElementById("stats");
+      try {
+        const res = await fetch(API_URL);
+        const data = await res.json();
+        let resumen = "Total votos: <strong>" + data.total_votos + "</strong><br>";
+        for (let cand in data.resumen_candidatos) {
+          resumen += "• " + cand + ": <strong>" + data.resumen_candidatos[cand] + "</strong> votos<br>";
+        }
+        statsDiv.innerHTML = resumen;
+      } catch (err) {
+        statsDiv.innerHTML = "Error al leer DynamoDB: " + err;
+      }
+    }
+
+    // Cargar estadísticas iniciales al abrir
+    cargarResultados();
+  </script>
+
+</body>
+</html>

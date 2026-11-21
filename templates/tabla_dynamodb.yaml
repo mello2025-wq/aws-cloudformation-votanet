@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Laboratorio CloudFormation - Creación de una tabla DynamoDB Serverless (Costo $0)"
+
+Parameters:
+  NombreTabla:
+    Type: String
+    Default: TablaPruebaCloudFormation
+    Description: "Nombre de la tabla DynamoDB"
+
+Resources:
+  MiTablaDynamoDB:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref NombreTabla
+      BillingMode: PAY_PER_REQUEST # Modo bajo demanda (Costo $0 si no se hacen peticiones)
+      AttributeDefinitions:
+        - AttributeName: IdUsuario
+          AttributeType: S # S = String (Texto)
+      KeySchema:
+        - AttributeName: IdUsuario
+          KeyType: HASH # Clave de partición primaria
+      Tags:
+        - Key: CreadoPor
+          Value: CloudFormation-IaC
+        - Key: Proyecto
+          Value: Curso-AWS-Linux
+
+Outputs:
+  ArnTabla:
+    Description: "ARN único de la tabla DynamoDB creada"
+    Value: !GetAtt MiTablaDynamoDB.Arn
+
+  NombreFinalTabla:
+    Description: "Nombre de la tabla"
+    Value: !Ref MiTablaDynamoDB

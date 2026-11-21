@@ -1,0 +1,228 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "VotaNet App - Arquitectura Serverless (DynamoDB + Lambda Python + API Gateway)"
+
+Parameters:
+  NombreTabla:
+    Type: String
+    Default: VotaNetVotos
+    Description: "Nombre de la tabla de DynamoDB para guardar los votos"
+
+Resources:
+  # 1. BASE DE DATOS: Tabla DynamoDB (Serverless / Modo Bajo Demanda $0)
+  TablaVotos:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref NombreTabla
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: VotoId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: VotoId
+          KeyType: HASH
+      Tags:
+        - Key: Proyecto
+          Value: VotaNet
+
+  # 2. SEGURIDAD: Rol IAM para que Lambda pueda escribir en DynamoDB y generar logs
+  RolEjecucionLambda:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: RolVotaNetLambda
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PermisosDynamoYLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                Resource: !GetAtt TablaVotos.Arn
+
+  # 3. LÓGICA DE NEGOCIO: Función AWS Lambda en Python
+  FuncionVotaNet:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: FuncionVotaNet
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt RolEjecucionLambda.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TablaVotos
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import uuid
+          from datetime import datetime
+          import boto3
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['TABLE_NAME'])
+
+          def handler(event, context):
+              method = event.get('httpMethod', '')
+              
+              # CABECERAS CORS para permitir llamadas web
+              headers = {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'OPTIONS,POST,GET',
+                  'Access-Control-Allow-Headers': 'Content-Type'
+              }
+
+              if method == 'OPTIONS':
+                  return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'mensaje': 'OK'})}
+
+              # PROCESAR VOTO (POST)
+              if method == 'POST':
+                  try:
+                      body = json.loads(event.get('body', '{}'))
+                      candidato = body.get('candidato', 'Voto_En_Blanco')
+                      votante = body.get('votante', 'Anonimo')
+                      voto_id = str(uuid.uuid4())[:8]
+                      fecha_hora = datetime.utcnow().isoformat()
+
+                      # Guardar en DynamoDB
+                      item = {
+                          'VotoId': voto_id,
+                          'Candidato': candidato,
+                          'Votante': votante,
+                          'FechaRegistro': fecha_hora
+                      }
+                      table.put_item(Item=item)
+
+                      return {
+                          'statusCode': 200,
+                          'headers': headers,
+                          'body': json.dumps({
+                              'mensaje': '¡Voto registrado exitosamente en AWS!',
+                              'datos': item
+                          })
+                      }
+                  except Exception as e:
+                      return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
+
+              # CONSULTAR RESULTADOS DE VOTOS (GET)
+              elif method == 'GET':
+                  try:
+                      response = table.scan()
+                      votos = response.get('Items', [])
+                      # Contar votos por candidato
+                      conteo = {}
+                      for v in votos:
+                          cand = v.get('Candidato', 'Desconocido')
+                          conteo[cand] = conteo.get(cand, 0) + 1
+
+                      return {
+                          'statusCode': 200,
+                          'headers': headers,
+                          'body': json.dumps({
+                              'total_votos': len(votos),
+                              'resumen_candidatos': conteo,
+                              'todos_los_votos': votos
+                          })
+                      }
+                  except Exception as e:
+                      return {'statusCode': 500, 'headers': headers, 'body': json.dumps({'error': str(e)})}
+
+              return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Metodo no soportado'})}
+
+  # 4. PUERTA DE ENTRADA: API Gateway
+  ApiVotaNet:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: ApiVotaNet
+      Description: "API REST para VotaNet App"
+
+  RecursoVotar:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiVotaNet
+      ParentId: !GetAtt ApiVotaNet.RootResourceId
+      PathPart: votar
+
+  # Método POST (/votar)
+  MetodoPostVotar:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiVotaNet
+      ResourceId: !Ref RecursoVotar
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FuncionVotaNet.Arn}/invocations"
+
+  # Método GET (/votar)
+  MetodoGetVotar:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiVotaNet
+      ResourceId: !Ref RecursoVotar
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FuncionVotaNet.Arn}/invocations"
+
+  # Método OPTIONS (/votar) - Requerido para navegadores web (CORS Preflight)
+  MetodoOptionsVotar:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiVotaNet
+      ResourceId: !Ref RecursoVotar
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FuncionVotaNet.Arn}/invocations"
+
+  # Despliegue de la API en el stage "prod"
+  DespliegueApi:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - MetodoPostVotar
+      - MetodoGetVotar
+      - MetodoOptionsVotar
+    Properties:
+      RestApiId: !Ref ApiVotaNet
+      StageName: prod
+
+  # 5. PERMISOS: Autorizar a API Gateway a ejecutar la función Lambda
+  PermisoApiGatewayLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FuncionVotaNet
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiVotaNet}/*/*/*"
+
+Outputs:
+  UrlParaVotar:
+    Description: "Dirección URL pública para registrar votos (POST) y consultar resultados (GET)"
+    Value: !Sub "https://${ApiVotaNet}.execute-api.${AWS::Region}.amazonaws.com/prod/votar"
+
+  NombreTablaDynamo:
+    Description: "Tabla DynamoDB creada"
+    Value: !Ref TablaVotos

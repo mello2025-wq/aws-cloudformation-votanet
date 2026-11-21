@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Laboratorio CloudFormation - Mi primera instancia EC2 t2.micro"
+
+Parameters:
+  TipoInstancia:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+    Description: "Tipo de instancia económica (Capa Gratuita de AWS)"
+
+  IdSubred:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0f90908d137373e5e
+    Description: "Subred pública de tu red vpc-limpia"
+
+Resources:
+  MiServidorCloudFormation:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref TipoInstancia
+      ImageId: ami-096ef200a877f36af # Amazon Linux 2023 en us-east-1
+      SubnetId: !Ref IdSubred
+      Tags:
+        - Key: Name
+          Value: Servidor-CloudFormation-Luis
+        - Key: CreadoPor
+          Value: CloudFormation-IaC
+
+Outputs:
+  IdInstancia:
+    Description: "ID de la instancia EC2 creada"
+    Value: !Ref MiServidorCloudFormation
+
+  IpPublica:
+    Description: "Dirección IP pública de la máquina virtual"
+    Value: !GetAtt MiServidorCloudFormation.PublicIp
